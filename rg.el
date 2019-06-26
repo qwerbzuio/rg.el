@@ -8,7 +8,7 @@
 ;;         Roland McGrath <roland@gnu.org>
 ;; Version: 1.7.0
 ;; URL: https://github.com/dajva/rg.el
-;; Package-Requires: ((cl-lib "0.5") (emacs "24.4") (s "1.10.0") (wgrep "2.1.10"))
+;; Package-Requires: ((cl-lib "0.5") (emacs "25") (s "1.10.0") (wgrep "2.1.10")) (a "0.1.1")
 ;; Keywords: matching, tools
 
 ;; This file is not part of GNU Emacs.
@@ -102,6 +102,7 @@
 (require 'rg-result)
 (require 's)
 (require 'vc)
+(require 'a)
 
 
 ;; Customizations/public vars
@@ -290,8 +291,10 @@ If SKIP-INTERNAL is non nil the `rg-internal-type-aliases' will be
 excluded."
   (unless rg-builtin-type-aliases
     (setq rg-builtin-type-aliases (rg-list-builtin-type-aliases)))
-  (append (rg-get-custom-type-aliases) rg-builtin-type-aliases
-          (unless skip-internal rg-internal-type-aliases)))
+  (apply 'a-merge-with (lambda (a b) (string-join (list a b) "  "))
+         (list (rg-get-custom-type-aliases)
+							 rg-builtin-type-aliases
+               (unless skip-internal rg-internal-type-aliases))))
 
 (defun rg-default-alias ()
   "Return the default alias by matching alias globs with the buffer file name."
