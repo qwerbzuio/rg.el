@@ -161,6 +161,22 @@ from `rg-get-type-aliases'."
   :type 'string
   :group 'rg)
 
+(defcustom rg-spaces-regexp "\\\\s+"
+	"Regexp replacing a single space in search string
+when REGEXP-TYPE is set to 'regexp-spaces. 
+To include double quotes (useful for searching multiline strings),
+one could set this to \"[\\\\\\\\s\\\"]+\"."
+	:type 'string
+	:group 'rg)
+
+(defconst rg-regexp-types
+	'(regexp ;; plain regexp
+		literal ;; literal string
+		regexp-spaces ;; regexp with spaces replaced by `rg-spaces-regexp'
+		regexp-plus ;; regexp with space-separated tokens joined by .*
+		regexp-plus-order ;; regexp with space-separated tokens that match in any order
+		))
+
 (defvar rg-command-line-flags-function 'identity
   "Function to modify command line flags of a search.
 The argument of the function is an optional list of search specific
@@ -229,10 +245,10 @@ Raises an error if it can not be found."
   "Return non nil if FILES is a custom file pattern."
   (not (assoc files (rg-get-type-aliases))))
 
-(defun rg-build-command (pattern files literal flags)
+(defun rg-build-command (pattern files regexp-type flags)
   "Create the command line for PATTERN and FILES.
-LITERAL determines if search will be literal or regexp based and FLAGS
-are command line flags to use for the search."
+REGEXP-TYPE determines how pattern will be interpreted (a value from `rg-regexp-types')
+and FLAGS are command line flags to use for the search."
   (let ((command-line
          (append
           (rg-build-type-add-args)
@@ -247,7 +263,7 @@ are command line flags to use for the search."
             (list (concat "--type-add " (shell-quote-argument (concat "custom:" files)))))
           (when rg-show-columns
             (list "--column"))
-          (when literal
+          (when (eq regexp-type t)
             (list "--fixed-strings"))
           (when (not (equal files "everything"))
             (list "--type <F>"))
@@ -257,7 +273,9 @@ are command line flags to use for the search."
 
     (grep-expand-template
      (mapconcat 'identity (cons (rg-command) (delete-dups command-line)) " ")
-     pattern
+     (cl-case regexp-type
+			 ('regexp-spaces (replace-regexp-in-string " +" rg-spaces-regexp pattern))
+			 (t pattern))
      (if (rg-is-custom-file-pattern files) "custom" files))))
 
 (defun rg-list-builtin-type-aliases ()
@@ -336,11 +354,15 @@ excluded."
      nil nil nil 'rg-files-history
      (car default-alias))))
 
-(defun rg-read-pattern (literal &optional default)
+(defun rg-read-pattern (regexp-type &optional default)
   "Read search pattern argument from user.
-If LITERAL is non nil prompt for literal string.  DEFAULT is the default pattern to use at the prompt."
+REGEXP-TYPE is one of `rg-regexp-types' and used to customize the prompt.
+DEFAULT is the default pattern to use at the prompt."
   (let ((default (or default (grep-tag-default)))
-        (prompt (concat (if literal "Literal" "Regexp")
+        (prompt (concat (cl-case regexp-type
+													((nil 'regexp) "Regexp")
+													('regexp-spaces "Regexp (universal spaces)")
+													(t "Literal")) ;; t is 'literal, for BWC
                         " search for")))
     (read-regexp prompt default 'rg-pattern-history)))
 
@@ -364,9 +386,9 @@ If LITERAL is non nil prompt for literal string.  DEFAULT is the default pattern
      (error (progn
               (file-name-directory file))))))
 
-(defun rg-run (pattern files dir &optional literal confirm flags)
+(defun rg-run (pattern files dir &optional regexp-type confirm flags)
   "Execute rg command with supplied PATTERN, FILES and DIR.
-If LITERAL is nil interpret PATTERN as regexp, otherwise as a literal.
+If REGEXP-TYPE is nil interpret PATTERN as regexp, otherwise as a literal.
 CONFIRM allows the user to confirm and modify the command before
 executing.  FLAGS is additional command line flags to use in the search."
   (unless (and (stringp pattern) (> (length pattern) 0))
@@ -376,7 +398,7 @@ executing.  FLAGS is additional command line flags to use in the search."
     (setq dir default-directory))
   (rg-apply-case-flag pattern)
   (let ((command (rg-build-command
-                  pattern files literal
+                  pattern files regexp-type
                   (append rg-toggle-command-line-flags flags)))
         confirmed)
     (setq dir (file-name-as-directory (expand-file-name dir)))
@@ -390,7 +412,7 @@ executing.  FLAGS is additional command line flags to use in the search."
                    :pattern pattern
                    :files files
                    :dir dir
-                   :literal literal
+                   :regexp-type regexp-type
                    :toggle-flags rg-toggle-command-line-flags
                    :flags flags)))
       (when (and confirmed
@@ -549,7 +571,10 @@ the :query option is missing, set it to ASK"
            (alias-opt (plist-get search-cfg :files))
            (dir-opt (plist-get search-cfg :dir))
            (flags-opt (plist-get search-cfg :flags))
-           (binding-list `((literal ,(eq format-opt 'literal)))))
+           (binding-list `((regexp-type
+														,(cond
+															((eq format-opt t) 'literal)
+															((eq format-opt 'regexp-spaces) (quote 'regexp-spaces)))))))
 
       ;; confirm binding
       (cond ((eq confirm-opt 'never)
@@ -598,7 +623,9 @@ the :query option is missing, set it to ASK"
     "Parse interactive args from SEARCH-CFG for search functions."
     (let* ((query-opt (plist-get search-cfg :query))
            (format-opt (plist-get search-cfg :format))
-           (literal (eq format-opt 'literal))
+           (regexp-type (cl-case format-opt
+													('regexp-spaces ''regexp-spaces)
+													((literal t) ''literal)))
            (dir-opt (plist-get search-cfg :dir))
            (files-opt (plist-get search-cfg :files))
            (flags-opt (plist-get search-cfg :flags))
@@ -606,7 +633,7 @@ the :query option is missing, set it to ASK"
 
       (when (eq query-opt 'ask)
         (setq iargs
-              (append iargs `((query . (rg-read-pattern ,literal))))))
+              (append iargs `((query . (rg-read-pattern ,regexp-type))))))
 
       (when (eq files-opt 'ask)
         (setq iargs
@@ -646,7 +673,7 @@ specified default if left out.
             evaulates to a string is allowed.
             Default is `ask'.
 :format     Specifies if :query is interpreted literally (`literal')
-            or as a regexp (`regexp').
+            or as a regexp (`regexp') or as another member of `rg-regexp-types'.
             Default is `regexp'.
 :files      Form that evaluates to a file alias or custom file glob.
             `current' means extract alias from current buffer file name,
@@ -682,7 +709,7 @@ Example:
        (interactive
         (list ,@(mapcar 'cdr iargs)))
        (let ,local-bindings
-         (rg-run query files dir literal confirm flags)))))
+         (rg-run query files dir regexp-type confirm flags)))))
 
 ;;;###autoload (autoload 'rg-project "rg.el" "" t)
 (rg-define-search rg-project
@@ -744,6 +771,13 @@ files with the same name pattern still will be searched."
 With \\[universal-argument] prefix (CONFIRM), you can edit the
 constructed shell command line before it is executed."
   :format literal
+  :confirm prefix)
+
+;;;###autoload (autoload 'rg-spaces "rg.el" "" t)
+(rg-define-search rg-spaces
+  "Run ripgrep, searching for REGEXP in FILES in directory DIR.
+Spaces are replaced by `rg-spaces-regexp'."
+	:format regexp-spaces
   :confirm prefix)
 
 ;;;###autoload (autoload 'rg "rg.el" "" t)

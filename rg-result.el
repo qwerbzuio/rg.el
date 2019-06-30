@@ -162,7 +162,7 @@ and, depending on configuration, column number and file name."
   files                  ; files to search
   dir                    ; base directory
   full-command           ; full-command (t or nil)
-  literal                ; literal patterh (t or nil)
+  regexp-type            ; regexp-type (one from rg-regexp-types)
   toggle-flags           ; toggle command line flags
   flags)                 ; search specific flags
 
